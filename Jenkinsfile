@@ -2,42 +2,58 @@ pipeline {
   agent any
 
   environment {
-    JAVA_HOME = "/usr/lib/jvm/java-21-openjdk-amd64"
-    PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
-
     S3_BUCKET = "petclinicapp2026-003713966195-us-east-1-an"
     BUILD_FILE_NAME = "petclinicapp-v1.jar"
-
     APP_USER = "petclinicapp"
     LOCAL_FILE_PATH = "/home/petclinicapp/petclinicapp-v1.jar"
-
     SSH_KEY = "/home/jenkins/petclinicappkey"
-
     TAG_KEY = "appname"
     TAG_VALUE = "petclinic"
   }
 
   stages {
 
+    stage('Debug Java (Jenkins Node)') {
+      steps {
+        sh '''
+          set -e
+          echo "=== Debug Java Used By Pipeline ==="
+          whoami
+          echo "JAVA_HOME=$JAVA_HOME"
+          which java || true
+          which javac || true
+          java -version
+          javac -version
+          echo "==================================="
+        '''
+      }
+    }
+
     stage('Build') {
       steps {
         sh '''
           set -e
-          cd initial
 
+          # FORCE Java 21 for Maven compile
+          export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:$PATH
+
+          echo "Using JAVA_HOME=$JAVA_HOME"
+          java -version
+          javac -version
+
+          cd initial
           chmod +x ./mvnw
           ./mvnw clean package
 
-          # Remove old fixed-name jar (prevents cp error when multiple jars exist)
+          # Prevent cp error when multiple jars exist
           rm -f target/${BUILD_FILE_NAME}
 
-          # Pick the newest real jar; exclude .original and the fixed-name jar
+          # Select the newest real jar, excluding ".original" and the fixed-name jar
           JAR=$(ls -1t target/*.jar | grep -vE '(.original|'"${BUILD_FILE_NAME}"')$' | head -n 1)
-
           echo "Built jar detected: $JAR"
-          cp "$JAR" target/${BUILD_FILE_NAME}
 
-          echo "Target directory contents:"
+          cp "$JAR" target/${BUILD_FILE_NAME}
           ls -l target/
         '''
       }
@@ -48,7 +64,7 @@ pipeline {
         sh '''
           set -e
           aws s3 cp $WORKSPACE/initial/target/${BUILD_FILE_NAME} s3://${S3_BUCKET}/${BUILD_FILE_NAME}
-          echo "Uploaded to: s3://${S3_BUCKET}/${BUILD_FILE_NAME}"
+          echo "Uploaded: s3://${S3_BUCKET}/${BUILD_FILE_NAME}"
         '''
       }
     }
