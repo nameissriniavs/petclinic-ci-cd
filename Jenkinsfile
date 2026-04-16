@@ -4,10 +4,15 @@ pipeline {
   environment {
     JAVA_HOME = "/usr/lib/jvm/java-21-openjdk-amd64"
     PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
-    S3_BUCKET = "petclinicapp2026"
+
+    S3_BUCKET = "petclinicapp2026-003713966195-us-east-1-an"
     BUILD_FILE_NAME = "petclinicapp-v1.jar"
+
     APP_USER = "petclinicapp"
+    LOCAL_FILE_PATH = "/home/petclinicapp/petclinicapp-v1.jar"
+
     SSH_KEY = "/home/jenkins/petclinicappkey"
+
     TAG_KEY = "appname"
     TAG_VALUE = "petclinic"
   }
@@ -20,14 +25,13 @@ pipeline {
           set -e
           cd initial
 
-          # Build
           chmod +x ./mvnw
           ./mvnw clean package
 
-          # Always remove old fixed-name jar to avoid cp "destination is not a directory" issue
+          # Remove old fixed-name jar (prevents cp error when multiple jars exist)
           rm -f target/${BUILD_FILE_NAME}
 
-          # Pick the latest built jar excluding any ".original" or the fixed-name jar
+          # Pick the newest real jar; exclude .original and the fixed-name jar
           JAR=$(ls -1t target/*.jar | grep -vE '(.original|'"${BUILD_FILE_NAME}"')$' | head -n 1)
 
           echo "Built jar detected: $JAR"
@@ -53,9 +57,7 @@ pipeline {
       steps {
         sh '''
           set -e
-          LOCAL_FILE_PATH=/home/${APP_USER}/${BUILD_FILE_NAME}
 
-          # Find running EC2 instances by tag
           output=$(aws ec2 describe-instances \
             --filters "Name=tag:${TAG_KEY},Values=${TAG_VALUE}" "Name=instance-state-name,Values=running" \
             --query "Reservations[*].Instances[*].[InstanceId,PublicIpAddress]" \
