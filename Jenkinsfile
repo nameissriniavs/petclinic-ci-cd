@@ -2,102 +2,99 @@ pipeline {
   agent any
 
   environment {
-    S3_BUCKET = "petclinicapp2026-003713966195-us-east-1-an"
+    AWS_REGION      = "us-east-1"
+    S3_BUCKET       = "petclinicapp-sriniavsa_ps007"
     BUILD_FILE_NAME = "petclinicapp-v1.jar"
-    APP_USER = "petclinicapp"
-    LOCAL_FILE_PATH = "/home/petclinicapp/petclinicapp-v1.jar"
-    SSH_KEY = "/home/jenkins/petclinicappkey"
-    TAG_KEY = "appname"
-    TAG_VALUE = "petclinic"
+
+    APP_TAG_KEY     = "appname"
+    APP_TAG_VALUE   = "petclinic"
+
+    SSH_KEY         = "/home/jenkins/petclinicappkey.pem"
+    SSH_USER        = "ubuntu"
+
+    REMOTE_USER     = "petclinicapp"
+    REMOTE_PATH     = "/home/petclinicapp/petclinicapp-v1.jar"
+    SERVICE_NAME    = "petclinicapp.service"
+  }
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
   }
 
   stages {
 
-    stage('Debug Java (Jenkins Node)') {
+    stage('Checkout') {
       steps {
-        sh '''
-          set -e
-          echo "=== Debug Java Used By Pipeline ==="
-          whoami
-          echo "JAVA_HOME=$JAVA_HOME"
-          which java || true
-          which javac || true
-          java -version
-          javac -version
-          echo "==================================="
-        '''
+        checkout scm
       }
     }
 
-    stage('Build') {
+    stage('Build (Maven)') {
       steps {
         sh '''
-          set -e
-
-          # FORCE Java 21 for Maven compile
-          export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-          export PATH=$JAVA_HOME/bin:$PATH
-
-          echo "Using JAVA_HOME=$JAVA_HOME"
-          java -version
-          javac -version
-
+          set -euo pipefail
           cd initial
-          chmod +x ./mvnw
-          ./mvnw clean package
+          chmod +x mvnw
+          ./mvnw -q clean package -DskipTests
 
-          # Prevent cp error when multiple jars exist
-          rm -f target/${BUILD_FILE_NAME}
-
-          # Select the newest real jar, excluding ".original" and the fixed-name jar
-          JAR=$(ls -1t target/*.jar | grep -vE '(.original|'"${BUILD_FILE_NAME}"')$' | head -n 1)
-          echo "Built jar detected: $JAR"
-
-          cp "$JAR" target/${BUILD_FILE_NAME}
-          ls -l target/
+          echo "Checking expected artifact exists..."
+          ls -lh target/${BUILD_FILE_NAME}
         '''
       }
     }
 
-    stage('Upload to S3') {
+    stage('Upload Artifact to S3') {
       steps {
         sh '''
-          set -e
-          aws s3 cp $WORKSPACE/initial/target/${BUILD_FILE_NAME} s3://${S3_BUCKET}/${BUILD_FILE_NAME}
-          echo "Uploaded: s3://${S3_BUCKET}/${BUILD_FILE_NAME}"
+          set -euo pipefail
+          aws --region ${AWS_REGION} s3 cp "$WORKSPACE/initial/target/${BUILD_FILE_NAME}" "s3://${S3_BUCKET}/${BUILD_FILE_NAME}"
+          echo "Uploaded to S3. Listing bucket:"
+          aws --region ${AWS_REGION} s3 ls "s3://${S3_BUCKET}/"
         '''
       }
     }
 
-    stage('Deploy to Application EC2') {
+    stage('Deploy to EC2 (tag appname=petclinic)') {
       steps {
         sh '''
-          set -e
+          set -euo pipefail
 
-          output=$(aws ec2 describe-instances \
-            --filters "Name=tag:${TAG_KEY},Values=${TAG_VALUE}" "Name=instance-state-name,Values=running" \
-            --query "Reservations[*].Instances[*].[InstanceId,PublicIpAddress]" \
-            --output json)
+          IPS=$(aws --region ${AWS_REGION} ec2 describe-instances \
+            --filters "Name=tag:${APP_TAG_KEY},Values=${APP_TAG_VALUE}" "Name=instance-state-name,Values=running" \
+            --query "Reservations[*].Instances[*].PublicIpAddress" \
+            --output text)
 
-          ips=$(echo "$output" | jq -r '.[][][1]')
-          echo "Target IPs: $ips"
+          echo "Target EC2 IPs: ${IPS}"
 
-          for ip in $ips; do
+          if [ -z "${IPS}" ]; then
+            echo "ERROR: No running EC2 instances found with tag ${APP_TAG_KEY}=${APP_TAG_VALUE}"
+            exit 1
+          fi
+
+          for ip in ${IPS}; do
             echo "-----------------------------------------------------"
-            echo "Connecting to $ip"
+            echo "Deploying to ${ip}"
 
-            ssh -o StrictHostKeyChecking=no -i ${SSH_KEY} ubuntu@$ip << EOF
-              sudo aws s3 cp s3://${S3_BUCKET}/${BUILD_FILE_NAME} ${LOCAL_FILE_PATH}
-              sudo chown ${APP_USER}:${APP_USER} ${LOCAL_FILE_PATH}
-              sudo chmod 644 ${LOCAL_FILE_PATH}
-              sudo systemctl restart petclinicapp.service
-              sudo systemctl status petclinicapp.service --no-pager
+            ssh -o StrictHostKeyChecking=no -i "${SSH_KEY}" "${SSH_USER}@${ip}" << EOF
+              set -euo pipefail
+              sudo aws --region ${AWS_REGION} s3 cp "s3://${S3_BUCKET}/${BUILD_FILE_NAME}" "${REMOTE_PATH}"
+              sudo chown ${REMOTE_USER}:${REMOTE_USER} "${REMOTE_PATH}" || true
+              sudo systemctl restart ${SERVICE_NAME}
+              sudo systemctl status ${SERVICE_NAME} --no-pager -l | head -n 30
 EOF
-
-            echo "-----------------------------------------------------"
           done
         '''
       }
+    }
+  }
+
+  post {
+    success {
+      echo "✅ Pipeline completed successfully."
+    }
+    failure {
+      echo "❌ Pipeline failed. Check console log for the failed stage."
     }
   }
 }
