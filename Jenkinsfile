@@ -3,13 +3,14 @@ pipeline {
 
   environment {
     AWS_REGION      = "us-east-1"
-    S3_BUCKET       = "petclinicapp-sriniavsa_ps007"
+    S3_BUCKET       = "petclinicapp-sriniavsaps007"
     BUILD_FILE_NAME = "petclinicapp-v1.jar"
 
     APP_TAG_KEY     = "appname"
     APP_TAG_VALUE   = "petclinic"
 
-    SSH_KEY         = "/home/jenkins/petclinicappkey.pem"
+    // ✅ NEW: Jenkins server generated SSH key
+    SSH_KEY         = "/home/jenkins/.ssh/petclinickey"
     SSH_USER        = "ubuntu"
 
     REMOTE_USER     = "petclinicapp"
@@ -38,7 +39,7 @@ pipeline {
           chmod +x mvnw
           ./mvnw -q clean package -DskipTests
 
-          echo "Checking expected artifact exists..."
+          echo "Build output:"
           ls -lh target/${BUILD_FILE_NAME}
         '''
       }
@@ -49,13 +50,13 @@ pipeline {
         sh '''
           set -euo pipefail
           aws --region ${AWS_REGION} s3 cp "$WORKSPACE/initial/target/${BUILD_FILE_NAME}" "s3://${S3_BUCKET}/${BUILD_FILE_NAME}"
-          echo "Uploaded to S3. Listing bucket:"
+          echo "S3 content:"
           aws --region ${AWS_REGION} s3 ls "s3://${S3_BUCKET}/"
         '''
       }
     }
 
-    stage('Deploy to EC2 (tag appname=petclinic)') {
+    stage('Deploy to EC2 Instances (tag appname=petclinic)') {
       steps {
         sh '''
           set -euo pipefail
@@ -90,11 +91,7 @@ EOF
   }
 
   post {
-    success {
-      echo "✅ Pipeline completed successfully."
-    }
-    failure {
-      echo "❌ Pipeline failed. Check console log for the failed stage."
-    }
+    success { echo "✅ Pipeline completed successfully." }
+    failure { echo "❌ Pipeline failed. Check console output of failed stage." }
   }
 }
