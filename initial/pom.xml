@@ -34,7 +34,7 @@
   </dependencies>
 
   <build>
-    <!-- ✅ Forces jar name: target/petclinicapp-v1.jar -->
+    <!-- ✅ Forces artifact name: target/petclinicapp-v1.jar -->
     <finalName>petclinicapp-v1</finalName>
 
     <plugins>
@@ -46,3 +46,4 @@
   </build>
 
 </project>
+``
